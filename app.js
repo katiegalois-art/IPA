@@ -97,7 +97,8 @@
         <a href="#/jeu/${esc(deck.id)}/filrouge" class="${tab === "filrouge" ? "on" : ""}">Fil rouge</a>
         <a href="#/jeu/${esc(deck.id)}/qcm" class="${tab === "qcm" ? "on" : ""}">QCM</a>
         <a href="#/jeu/${esc(deck.id)}/oral" class="${tab === "oral" ? "on" : ""}">Oral</a>
-        <a href="#/jeu/${esc(deck.id)}/carre" class="${tab === "carre" ? "on" : ""}">Carré clinique</a></nav>
+        <a href="#/jeu/${esc(deck.id)}/carre" class="${tab === "carre" ? "on" : ""}">Carré clinique</a>
+        ${(window.ORDOS || {})[deck.id] ? `<a href="#/jeu/${esc(deck.id)}/ordo" class="${tab === "ordo" ? "on" : ""}">Ordonnances</a>` : ""}</nav>
       ${inner}</div>`;
   }
 
@@ -197,6 +198,7 @@
         <a class="mode" href="#/jeu/${esc(deck.id)}/qcm"><div class="ico">☑</div><h3>QCM</h3><p>Sans écrire : cocher les repères attendus, retrouver la situation ou l'étape du raisonnement.</p></a>
         <a class="mode" href="#/jeu/${esc(deck.id)}/oral"><div class="ico">🎙</div><h3>Oral</h3><p>Répondez à voix haute : l'application écoute et vérifie les repères cités. Seul, sans rien écrire.</p></a>
         <a class="mode" href="#/jeu/${esc(deck.id)}/carre"><div class="ico">◆</div><h3>Carré clinique</h3><p>Partie en table avec les cartes imprimées : tableau des scores et minuteur de synthèse.</p></a>
+        ${(window.ORDOS || {})[deck.id] ? `<a class="mode" href="#/jeu/${esc(deck.id)}/ordo"><div class="ico">℞</div><h3>Ordonnances</h3><p>Je rédige l'ordonnance, je corrige les erreurs de prescription : traitements, biologie, examens, soins de support, dans le cadre IPA.</p></a>` : ""}
         <a class="mode" href="#/jeu/${esc(deck.id)}/cartes"><div class="ico">▤</div><h3>Consulter les cartes</h3><p>Toutes les cartes, filtrables par couleur, avec recherche.</p></a>
       </div>
       <h2>Ma progression</h2>
@@ -627,6 +629,98 @@
     setup();
   }
 
+  // ---------- Ordonnances : je rédige / je corrige ----------
+  const CATS = { T: "Traitements", B: "Bilans biologiques", X: "Examens complémentaires", S: "Soins de support, dispositifs et prestations", M: "Mentions de l'ordonnance" };
+  const STAT = { A: ["Attendu", "good"], P: ["Possible selon le contexte", "poss"], E: ["Erreur", "bad"], H: ["Hors cadre IPA", "hors"] };
+  function ordoPaper(o, lines, header) {
+    return `<div class="paper">
+      <div class="paper-hd">${header}</div>
+      ${lines}
+      <div class="paper-ft">Signature</div></div>`;
+  }
+  function viewOrdo(deck, params) {
+    const data = (window.ORDOS || {})[deck.id];
+    if (!data) { app.innerHTML = deckShell(deck, "ordo", '<div class="empty">Pas d\'ordonnances pour ce jeu.</div>'); return; }
+    const ci = params.get("c"), mode = params.get("m");
+    if (ci === null) {
+      app.innerHTML = deckShell(deck, "ordo", `
+        <div class="panel"><h2>Ordonnances</h2>
+          <p class="muted small">Deux exercices par situation, sans rien écrire : composer l'ordonnance en sélectionnant les prescriptions, ou repérer les erreurs d'une ordonnance. La correction s'appuie sur le cadre réglementaire de la prescription IPA.</p>
+          <div class="list">${data.cas.map((c, i) => `<div class="li ordo-li"><span class="v">${esc(c.valeur)}</span><span style="flex:1"><b>${esc(c.titre)}</b><br><span class="muted small">${esc(c.patient)}</span></span>
+            <span class="row"><a class="btn sm primary" href="#/jeu/${esc(deck.id)}/ordo?c=${i}&m=rediger">Je rédige</a><a class="btn sm" href="#/jeu/${esc(deck.id)}/ordo?c=${i}&m=corriger">Je corrige</a></span></div>`).join("")}</div></div>
+        <div class="panel" style="margin-top:12px"><h2>${esc(data.cadre.titre)}</h2><ul class="small" style="line-height:1.55;padding-left:18px">${data.cadre.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>
+          <p class="muted small">Références : arrêté du 18 juillet 2018 modifié fixant les listes permettant l'exercice infirmier en pratique avancée (annexes I à VII, dont l'arrêté du 25 avril 2025) ; décret n° 2025-55 du 20 janvier 2025. Primo-prescription réservée aux IPA exerçant dans les structures prévues par les textes. Fiche à actualiser à chaque évolution réglementaire.</p></div>`);
+      return;
+    }
+    const c = data.cas[+ci]; if (!c) { location.hash = `#/jeu/${deck.id}/ordo`; return; }
+    const head = (title, cons) => `<div class="bar"><b>${esc(c.valeur)} · ${esc(c.titre)}</b><span class="tag">${title}</span><div class="spacer"></div><a class="btn sm" href="#/jeu/${esc(deck.id)}/ordo">Retour</a></div>
+      <div class="panel"><div class="kicker">Situation</div><p style="margin:6px 0 4px"><b>${esc(c.patient)}</b></p><p class="small" style="margin:0 0 8px;line-height:1.5">${esc(c.contexte)}</p><p class="q-line"><b>${esc(cons || c.consigne)}</b></p></div>`;
+    if (mode === "corriger") {
+      const flagged = new Set();
+      const render = (done) => {
+        const lines = c.correction.map(([t, err], k) => {
+          let cls = flagged.has(k) ? "flag" : ""; let note = "";
+          if (done) {
+            if (err && flagged.has(k)) { cls = "found"; note = `<div class="lnote">✓ Erreur repérée : ${esc(err)}</div>`; }
+            else if (err) { cls = "missed"; note = `<div class="lnote">Erreur non repérée : ${esc(err)}</div>`; }
+            else if (flagged.has(k)) { cls = "fp"; note = `<div class="lnote">Cette ligne est conforme.</div>`; }
+          }
+          return `<button class="pline ${cls}" data-k="${k}" ${done ? "disabled" : ""}>${esc(t)}${note}</button>`;
+        }).join("");
+        const nErr = c.correction.filter((l) => l[1]).length;
+        const found = c.correction.filter((l, k) => l[1] && flagged.has(k)).length;
+        const fp = c.correction.filter((l, k) => !l[1] && flagged.has(k)).length;
+        app.innerHTML = deckShell(deck, "ordo", `<div class="play">${head("Je corrige", "Cette ordonnance a été rédigée pour ce patient : repérez les erreurs.")}
+          <p class="muted small" style="margin:0">Touchez chaque ligne qui contient une erreur (prescription hors cadre, erreur clinique, posologie, mention manquante…), puis validez.</p>
+          ${ordoPaper(c, lines, "Ordonnance")}
+          ${done ? `<div class="panel"><div class="big-stat">${found} / ${nErr}</div><div class="small muted">erreurs repérées${fp ? ` · ${fp} ligne${fp > 1 ? "s" : ""} conforme${fp > 1 ? "s" : ""} signalée${fp > 1 ? "s" : ""} à tort` : ""}</div>
+              <p class="small" style="margin-top:8px"><b>Renouvellement :</b> ${esc(c.renouv)}</p>
+              <div class="row" style="margin-top:10px"><a class="btn primary" href="#/jeu/${esc(deck.id)}/ordo?c=${ci}&m=rediger">Rédiger cette ordonnance</a><button class="btn" id="again">Recommencer</button><a class="btn" href="#/jeu/${esc(deck.id)}/ordo">Autre situation</a></div></div>`
+            : `<div class="row" style="justify-content:center"><button class="btn primary" id="val">Valider ma correction</button></div>`}</div>`);
+        app.querySelectorAll(".pline").forEach((b) => b.onclick = () => { const k = +b.dataset.k; flagged.has(k) ? flagged.delete(k) : flagged.add(k); b.classList.toggle("flag"); });
+        const v = document.getElementById("val"); if (v) v.onclick = () => { render(true); window.scrollTo(0, 0); };
+        const a = document.getElementById("again"); if (a) a.onclick = () => { flagged.clear(); render(false); };
+      };
+      render(false);
+      return;
+    }
+    // mode rédiger
+    const items = [...c.items.map((x) => ({ cat: x[0], t: x[1], s: x[2], e: x[3] })), ...(window.ORDO_MENTIONS || []).map((x) => ({ cat: "M", t: x[0], s: x[1], e: x[2] }))];
+    const order = {}; Object.keys(CATS).forEach((k) => { order[k] = shuffle(items.map((it, i) => i).filter((i) => items[i].cat === k)); });
+    const sel = new Set();
+    const render = (done) => {
+      const groups = Object.keys(CATS).filter((k) => order[k].length).map((k) => `<h3 class="small ordo-cat">${CATS[k]}</h3><div class="opts">${order[k].map((i) => {
+        const it = items[i]; let cls = sel.has(i) ? "sel" : ""; let note = "";
+        if (done) {
+          const [lab, st] = STAT[it.s];
+          if (sel.has(i)) { cls = it.s === "A" || it.s === "P" ? (it.s === "A" ? "good" : "poss") : "bad"; note = `<span class="onote">${it.s === "A" ? "✓ Attendu" : it.s === "P" ? "✓ Acceptable" : "✗ " + lab} · ${esc(it.e)}</span>`; }
+          else if (it.s === "A") { cls = "missed-o"; note = `<span class="onote">Oublié · ${esc(it.e)}</span>`; }
+          else { cls = "dim"; note = `<span class="onote">${lab} · ${esc(it.e)}</span>`; }
+        }
+        return `<button class="opt ${cls}" data-i="${i}" ${done ? "disabled" : ""}>${esc(it.t)}${note}</button>`;
+      }).join("")}</div>`).join("");
+      let result = "";
+      if (done) {
+        const att = items.filter((it) => it.s === "A"), got = items.filter((it, i) => it.s === "A" && sel.has(i)).length;
+        const bad = items.filter((it, i) => (it.s === "E" || it.s === "H") && sel.has(i)).length;
+        const pct = Math.max(0, Math.round(((got - bad) / att.length) * 100));
+        const model = c.items.filter((x) => x[2] === "A").map((x) => `<div class="pline static">${esc(x[1])}</div>`).join("")
+          + c.items.filter((x) => x[2] === "P").map((x) => `<div class="pline static poss-l">Selon le contexte : ${esc(x[1])}</div>`).join("");
+        result = `<div class="panel"><div class="big-stat">${pct} %</div><div class="small muted">${got} / ${att.length} éléments attendus · ${bad} erreur${bad > 1 ? "s" : ""} ou prescription${bad > 1 ? "s" : ""} hors cadre</div>
+          <p class="small" style="margin-top:8px"><b>Renouvellement :</b> ${esc(c.renouv)}</p></div>
+          <h2>Ordonnance type</h2>${ordoPaper(c, model, `IPA, ${esc(deck.court || deck.titre)} · RPPS · structure<br>${esc(c.patient)} · date`)}
+          <div class="row"><a class="btn primary" href="#/jeu/${esc(deck.id)}/ordo?c=${ci}&m=corriger">Je corrige l'ordonnance de cette situation</a><a class="btn" href="#/jeu/${esc(deck.id)}/ordo">Autre situation</a></div>`;
+      }
+      app.innerHTML = deckShell(deck, "ordo", `<div class="play">${head("Je rédige")}
+        <p class="muted small" style="margin:0">Sélectionnez tout ce que vous inscrivez sur l'ordonnance, dans votre cadre de prescription IPA. Certaines propositions relèvent du médecin ou sont des erreurs.</p>
+        <div class="panel">${groups}</div>
+        ${done ? result : '<div class="row" style="justify-content:center"><button class="btn primary" id="val">Valider mon ordonnance</button></div>'}</div>`);
+      app.querySelectorAll(".opt").forEach((b) => b.onclick = () => { const i = +b.dataset.i; sel.has(i) ? sel.delete(i) : sel.add(i); b.classList.toggle("sel"); });
+      const v = document.getElementById("val"); if (v) v.onclick = () => { render(true); };
+    };
+    render(false);
+  }
+
   function viewRules(deck) {
     const pdf = deck.builtin ? `jeu_${deck.id}.pdf` : null;
     app.innerHTML = deckShell(deck, "regles", `
@@ -726,7 +820,7 @@
     if (parts[0] === "jeu" && parts[1]) {
       const deck = deckById(decodeURIComponent(parts[1]));
       if (!deck) { app.innerHTML = '<div class="empty">Jeu introuvable. <a href="#/">Retour à l\'accueil</a></div>'; return; }
-      const v = { "": viewDeck, cartes: viewCards, eclair: viewEclair, filrouge: viewFilRouge, carre: viewCarre, regles: viewRules, qcm: viewQCM, oral: viewOral }[parts[2] || ""] || viewDeck;
+      const v = { "": viewDeck, cartes: viewCards, eclair: viewEclair, filrouge: viewFilRouge, carre: viewCarre, regles: viewRules, qcm: viewQCM, oral: viewOral, ordo: viewOrdo }[parts[2] || ""] || viewDeck;
       v(deck, params);
     } else if (parts[0] === "gerer") viewManage();
     else if (parts[0] === "aide") viewHelp();
