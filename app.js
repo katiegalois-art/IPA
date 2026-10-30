@@ -58,7 +58,7 @@
   }
 
   // ---------- composants ----------
-  function cardHTML(deck, sit, coul, { open = false, status = "" } = {}) {
+  function cardHTML(deck, sit, coul, { open = false, status = "", hide = false } = {}) {
     const c = sit.cartes[coul.cle];
     const first = deck.couleurs[0].cle;
     const sitLine = deck.rappel && coul.cle !== first && sit.cartes[first]
@@ -78,8 +78,8 @@
         ${sitLine}
         <p class="vig">${esc(c.vignette)}</p>
         <p class="q">${esc(c.question)}</p>
-        <details ${open ? "open" : ""}><summary><span class="cl">Afficher les repères attendus</span><span class="op">Repères attendus</span></summary>
-          <ul>${c.reperes.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></details>
+        ${hide ? '<div class="ans"></div>' : `<details ${open ? "open" : ""}><summary><span class="cl">Afficher les repères attendus</span><span class="op">Repères attendus</span></summary>
+          <ul>${c.reperes.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></details>`}
       </div></article>`;
   }
   function jokerHTML(j, n) {
@@ -109,6 +109,61 @@
     const draw = () => { el.textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0"); el.classList.toggle("low", left <= 10); };
     draw();
     timerHandle = setInterval(() => { left--; draw(); if (left <= 0) { stopTimer(); if (navigator.vibrate) try { navigator.vibrate(200); } catch (e) {} onEnd && onEnd(); } }, 1000);
+  }
+
+
+  // ---------- répondre avant de voir les repères ----------
+  // Le candidat répond (à l'oral avec le micro, ou en touchant « J'ai répondu ») ; les repères ne s'affichent qu'ensuite.
+  function mountAnswer(zone, reperes, { seconds = 0, timerEl = null, onDone } = {}) {
+    const n = reperes.length;
+    const voiceOK = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    let rec = null, listening = false, started = false, finished = false, finalTxt = "", interim = "";
+    zone.innerHTML = `<div class="ans-box">
+      <div class="kicker" style="color:var(--c)">Votre réponse</div>
+      <p class="muted small" style="margin:4px 0 10px">Répondez à voix haute. Les repères attendus s'affichent une fois votre réponse donnée.</p>
+      <div class="slots">${reperes.map(() => '<span class="slot"></span>').join("")}</div>
+      <div class="row" style="justify-content:center;margin-top:12px">
+        ${voiceOK ? '<button class="btn primary" data-a="mic">🎙 Répondre à l\'oral</button>' : ""}
+        <button class="btn" data-a="done">J'ai répondu</button></div>
+      <p class="transcript"></p></div>`;
+    const slots = [...zone.querySelectorAll(".slot")], tr = zone.querySelector(".transcript");
+    const micBtn = zone.querySelector('[data-a="mic"]'), doneBtn = zone.querySelector('[data-a="done"]');
+    const stopRec = () => { listening = false; if (rec) { try { rec.stop(); } catch (e) {} } };
+    window.__stopRec = stopRec;
+    const refresh = () => {
+      const txt = (finalTxt + " " + interim).trim();
+      tr.textContent = txt ? "« " + txt + " »" : "";
+      const d = detect(reperes, txt); slots.forEach((el, k) => el.classList.toggle("on", d[k]));
+    };
+    function startTimerOnce() { if (!started) { started = true; if (seconds && timerEl) startTimer(timerEl, seconds, finish); } }
+    function finish() {
+      if (finished) return; finished = true; stopTimer(); stopRec();
+      const spoke = (finalTxt + interim).trim().length > 0;
+      const det = spoke ? detect(reperes, finalTxt + " " + interim) : reperes.map(() => false);
+      const got = new Set(det.map((v, k) => (v ? k : -1)).filter((k) => k >= 0));
+      const draw = () => {
+        zone.innerHTML = `<div class="ans-box">
+          <div class="kicker" style="color:var(--c)">${spoke ? "Verdict de l'application" : "Repères attendus · auto-évaluation"} · ${got.size} / ${n}</div>
+          ${spoke ? `<p class="transcript">« ${esc((finalTxt + " " + interim).trim())} »</p>` : ""}
+          <div class="opts">${reperes.map((r, k) => `<button class="opt ${got.has(k) ? "good" : "miss"}" data-k="${k}">${got.has(k) ? "✓ " : "○ "}${esc(r)}</button>`).join("")}</div>
+          <p class="muted small" style="margin-top:6px">${spoke ? "Erreur de reconnaissance ? Touchez un repère pour corriger." : "Touchez les repères que vous aviez cités."}</p></div>`;
+        zone.querySelectorAll(".opt").forEach((b) => b.onclick = () => { const k = +b.dataset.k; got.has(k) ? got.delete(k) : got.add(k); draw(); onDone && onDone(got.size, n, true); });
+      };
+      draw(); onDone && onDone(got.size, n, false);
+    }
+    doneBtn.onclick = finish;
+    if (micBtn) micBtn.onclick = () => {
+      if (listening) return finish();
+      startTimerOnce();
+      const SRc = window.SpeechRecognition || window.webkitSpeechRecognition;
+      rec = new SRc(); rec.lang = "fr-FR"; rec.continuous = true; rec.interimResults = true; listening = true;
+      micBtn.textContent = "■ J'ai fini de parler"; micBtn.classList.add("live-btn");
+      rec.onresult = (e) => { interim = ""; for (let k = e.resultIndex; k < e.results.length; k++) { const t = e.results[k][0].transcript; if (e.results[k].isFinal) finalTxt += " " + t; else interim += " " + t; } refresh(); };
+      rec.onerror = (e) => { if (["not-allowed", "service-not-allowed", "audio-capture"].includes(e.error)) { listening = false; micBtn.remove(); tr.textContent = "Micro indisponible : répondez à voix haute puis touchez « J'ai répondu »."; } };
+      rec.onend = () => { if (listening && !finished) { try { rec.start(); } catch (e) {} } };
+      try { rec.start(); } catch (e) { listening = false; }
+    };
+    return { start: startTimerOnce, finish };
   }
 
   // ---------- vues ----------
@@ -194,7 +249,7 @@
       app.innerHTML = deckShell(deck, "eclair", `
         <div class="panel">
           <h2>Tirage éclair</h2>
-          <p class="muted small">Tirez une carte, lisez la vignette et la question à voix haute ; la personne interrogée répond avant de dévoiler les repères.</p>
+          <p class="muted small">Une carte au hasard : répondez à voix haute (micro ou non). Les repères attendus ne s'affichent qu'après votre réponse, ou à la fin du temps.</p>
           <h3 class="small">Couleurs</h3>
           <div class="checks">${deck.couleurs.map((c) => `<label><input type="checkbox" data-suit="${esc(c.cle)}" checked> <span style="color:${esc(c.col)}">${esc(c.sym)}</span> ${esc(c.etape)}</label>`).join("")}</div>
           <h3 class="small">Situations</h3>
@@ -229,17 +284,22 @@
           <div class="bar"><b>${s.i + 1} / ${s.order.length}</b><div class="progress"><i style="width:${(s.i / s.order.length) * 100}%"></i></div>
             ${s.seconds ? `<span class="timer" id="tm"></span><button class="btn sm" id="restart">↻</button>` : ""}
             <button class="btn sm" id="stop">Terminer</button></div>
-          ${cardHTML(deck, c.sit, c.coul)}
-          <div class="row" style="justify-content:center">
+          ${cardHTML(deck, c.sit, c.coul, { hide: true })}
+          <div class="row" style="justify-content:center" id="verdict" hidden>
+            <span id="sugg" class="small muted" style="width:100%;text-align:center"></span>
             <button class="btn ko" id="ko">↺ À revoir</button>
             <button class="btn ok" id="ok">✓ Réussie</button>
-            <button class="btn" id="skip">Passer</button>
           </div>
+          <div class="row" style="justify-content:center"><button class="btn sm" id="skip">Passer cette carte</button></div>
         </div>`);
       const tm = document.getElementById("tm");
-      const go = () => tm && startTimer(tm, s.seconds, () => { const d = app.querySelector(".card details"); if (d) d.open = true; });
-      go(); if (tm) document.getElementById("restart").onclick = go;
-      const mark = (v) => { stopTimer(); if (v) { s.res[c.id] = v; prog[c.id] = v; store.set(progressKey(deck), prog); } s.i++; play(); window.scrollTo(0, 0); };
+      const ans = mountAnswer(app.querySelector(".card .ans"), c.carte.reperes, { seconds: s.seconds, timerEl: tm, onDone: (got, n) => {
+        document.getElementById("verdict").hidden = false;
+        document.getElementById("sugg").textContent = got / n >= 0.5 ? `${got} / ${n} repères : carte réussie ?` : `${got} / ${n} repères : à revoir ?`;
+        const r = document.getElementById("restart"); if (r) r.remove();
+      } });
+      ans.start(); if (tm) document.getElementById("restart").onclick = () => startTimer(tm, s.seconds, ans.finish);
+      const mark = (v) => { stopTimer(); try { window.__stopRec && window.__stopRec(); } catch (e) {} if (v) { s.res[c.id] = v; prog[c.id] = v; store.set(progressKey(deck), prog); } s.i++; play(); window.scrollTo(0, 0); };
       document.getElementById("ok").onclick = () => mark("ok");
       document.getElementById("ko").onclick = () => mark("revoir");
       document.getElementById("skip").onclick = () => mark(null);
@@ -269,7 +329,7 @@
     const sit = deck.situations.find((x) => x.valeur === v);
     if (!sit) {
       app.innerHTML = deckShell(deck, "filrouge", `<div class="panel"><h2>Fil rouge</h2>
-        <p class="muted small">Choisissez une situation : ses 4 cartes seront révélées une à une. Avant chaque révélation, le groupe anticipe ce qu'il s'attend à découvrir.</p>
+        <p class="muted small">Choisissez une situation : ses 4 cartes sont révélées une à une. Pour chaque carte, répondez d'abord ; les repères s'affichent ensuite et l'étape suivante se débloque.</p>
         <div class="list">${deck.situations.map((x) => `<a href="#/jeu/${esc(deck.id)}/filrouge?s=${encodeURIComponent(x.valeur)}"><span class="v">${esc(x.valeur)}</span><span>${esc(x.titre)}${x.sous_titre ? `<br><span class="muted small">${esc(x.sous_titre)}</span>` : ""}</span></a>`).join("")}
           <button class="li" id="rnd"><span class="v">?</span>Situation au hasard</button></div></div>`);
       document.getElementById("rnd").onclick = () => { location.hash = `#/jeu/${deck.id}/filrouge?s=${encodeURIComponent(shuffle(deck.situations)[0].valeur)}`; };
@@ -280,11 +340,13 @@
       app.innerHTML = deckShell(deck, "filrouge", `<div class="play">
         <div class="bar"><b>${esc(sit.valeur)} · ${esc(sit.titre)}</b><div class="spacer"></div><a class="btn sm" href="#/jeu/${esc(deck.id)}/filrouge">Changer</a></div>
         <div class="steps">${deck.couleurs.map((c, i) => `<span class="${i <= step ? "on" : ""}" style="${i <= step ? "background:" + c.col : ""}">${esc(c.sym)} ${esc(c.etape)}</span>`).join("")}</div>
-        ${deck.couleurs.slice(0, step + 1).map((c) => cardHTML(deck, sit, c)).join("")}
-        <div class="row" style="justify-content:center">
-          ${step < deck.couleurs.length - 1 ? `<button class="btn primary" id="next">Révéler l'étape suivante : ${esc(deck.couleurs[step + 1].sym)} ${esc(deck.couleurs[step + 1].etape)}</button>`
-            : `<div class="notice">Synthèse : un étudiant reformule le raisonnement complet, du recueil des données au suivi. Le groupe vérifie la cohérence de chaque étape.</div>`}
+        ${deck.couleurs.slice(0, step + 1).map((c, i) => i < step ? cardHTML(deck, sit, c, { open: true }) : cardHTML(deck, sit, c, { hide: true })).join("")}
+        <div class="row" style="justify-content:center" id="after" hidden>
+          ${step < deck.couleurs.length - 1 ? `<button class="btn primary" id="next">Étape suivante : ${esc(deck.couleurs[step + 1].sym)} ${esc(deck.couleurs[step + 1].etape)}</button>`
+            : `<div class="notice">Synthèse : reformulez à voix haute le raisonnement complet, du recueil des données au suivi, en vérifiant la cohérence de chaque étape.</div>`}
         </div></div>`);
+      const zones = app.querySelectorAll(".card .ans");
+      mountAnswer(zones[zones.length - 1], sit.cartes[deck.couleurs[step].cle].reperes, { onDone: () => { document.getElementById("after").hidden = false; } });
       const n = document.getElementById("next");
       if (n) n.onclick = () => { step++; draw(); const cards = app.querySelectorAll(".card"); cards[cards.length - 1].scrollIntoView({ behavior: "smooth", block: "start" }); };
     };
