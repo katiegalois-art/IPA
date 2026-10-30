@@ -22,6 +22,8 @@ Les jeux par mention indiquent sur chaque carte les compétences IPA mobilisées
 
 - **Tirage éclair** : révision individuelle ou en binôme, carte au hasard, minuteur, repères masqués jusqu'à la réponse, suivi « réussie / à revoir ».
 - **Fil rouge** : déroulé d'une situation étape par étape, à projeter en travaux dirigés.
+- **QCM** : sans écrire, cocher les repères attendus d'une carte, retrouver la situation ou l'étape du raisonnement d'un repère (questions générées automatiquement à partir des cartes).
+- **Oral** : l'étudiant répond à voix haute, l'application écoute (reconnaissance vocale du navigateur : Chrome, Edge, Safari) et vérifie les repères cités ; verdict corrigeable d'un toucher. Seul, sans écrire.
 - **Carré clinique** : tableau des scores et minuteur pour accompagner une partie avec les cartes imprimées.
 - **Consultation** des cartes avec filtres par couleur et recherche plein texte.
 - **Gestion** : export d'un jeu en JSON, import d'un jeu créé par l'équipe, modèle vierge, réinitialisation de la progression.

@@ -95,6 +95,8 @@
       <nav class="tabs">${tabs.map(([k, l]) => `<a href="#/jeu/${esc(deck.id)}${k ? "/" + k : ""}" class="${tab === k ? "on" : ""}">${l}</a>`).join("")}
         <a href="#/jeu/${esc(deck.id)}/eclair" class="${tab === "eclair" ? "on" : ""}">Tirage éclair</a>
         <a href="#/jeu/${esc(deck.id)}/filrouge" class="${tab === "filrouge" ? "on" : ""}">Fil rouge</a>
+        <a href="#/jeu/${esc(deck.id)}/qcm" class="${tab === "qcm" ? "on" : ""}">QCM</a>
+        <a href="#/jeu/${esc(deck.id)}/oral" class="${tab === "oral" ? "on" : ""}">Oral</a>
         <a href="#/jeu/${esc(deck.id)}/carre" class="${tab === "carre" ? "on" : ""}">Carré clinique</a></nav>
       ${inner}</div>`;
   }
@@ -137,6 +139,8 @@
       <div class="modes">
         <a class="mode" href="#/jeu/${esc(deck.id)}/eclair"><div class="ico">⚡</div><h3>Tirage éclair</h3><p>Révision seul ou en binôme : une carte au hasard, une minute pour répondre, puis les repères.</p></a>
         <a class="mode" href="#/jeu/${esc(deck.id)}/filrouge"><div class="ico">➜</div><h3>Fil rouge</h3><p>Étude de cas en groupe : les 4 cartes d'une situation révélées dans l'ordre ♥ ♦ ♣ ♠.</p></a>
+        <a class="mode" href="#/jeu/${esc(deck.id)}/qcm"><div class="ico">☑</div><h3>QCM</h3><p>Sans écrire : cocher les repères attendus, retrouver la situation ou l'étape du raisonnement.</p></a>
+        <a class="mode" href="#/jeu/${esc(deck.id)}/oral"><div class="ico">🎙</div><h3>Oral</h3><p>Répondez à voix haute : l'application écoute et vérifie les repères cités. Seul, sans rien écrire.</p></a>
         <a class="mode" href="#/jeu/${esc(deck.id)}/carre"><div class="ico">◆</div><h3>Carré clinique</h3><p>Partie en table avec les cartes imprimées : tableau des scores et minuteur de synthèse.</p></a>
         <a class="mode" href="#/jeu/${esc(deck.id)}/cartes"><div class="ico">▤</div><h3>Consulter les cartes</h3><p>Toutes les cartes, filtrables par couleur, avec recherche.</p></a>
       </div>
@@ -340,6 +344,227 @@
     return false;
   }
 
+  // ---------- QCM (généré à partir des cartes) ----------
+  const words = (t) => new Set(String(t).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(/[^a-z0-9]+/).filter((w) => w.length > 3));
+  function overlap(a, b) { const A = words(a), B = words(b); if (!A.size || !B.size) return 0; let n = 0; A.forEach((w) => { if (B.has(w)) n++; }); return n / Math.min(A.size, B.size); }
+  function buildQ(type, card, all, deck) {
+    if (type === "reperes") {
+      const good = shuffle(card.carte.reperes).slice(0, Math.min(3, card.carte.reperes.length));
+      const pool = shuffle(all.filter((c) => c.coul.cle === card.coul.cle && c.sit.valeur !== card.sit.valeur).flatMap((c) => c.carte.reperes))
+        .filter((r) => card.carte.reperes.every((g) => overlap(r, g) < 0.35));
+      const bad = []; for (const r of pool) { if (bad.length >= 6 - good.length) break; if (bad.every((b) => overlap(r, b) < 0.5)) bad.push(r); }
+      return { type, card, multi: true, stem: card.carte.question,
+        options: shuffle([...good.map((t) => ({ t, ok: true })), ...bad.map((t) => ({ t, ok: false }))]) };
+    }
+    if (type === "situation") {
+      const rep = card.carte.reperes.slice().sort((a, b) => b.length - a.length)[0];
+      const others = shuffle(deck.situations.filter((s) => s.valeur !== card.sit.valeur)).slice(0, 3);
+      return { type, card, multi: false, stem: `« ${rep} »`, ask: "À quelle situation appartient ce repère ?",
+        options: shuffle([{ t: card.sit.titre, ok: true }, ...others.map((s) => ({ t: s.titre, ok: false }))]) };
+    }
+    const rep = shuffle(card.carte.reperes)[0];
+    return { type: "etape", card, multi: false, stem: `« ${rep} »`, ask: `Situation « ${card.sit.titre} » : à quelle étape du raisonnement correspond ce repère ?`,
+      options: deck.couleurs.map((c) => ({ t: `${c.sym} ${c.etape}`, ok: c.cle === card.coul.cle })) };
+  }
+  function viewQCM(deck) {
+    const all = cardsOf(deck);
+    const s = { types: new Set(["reperes", "situation", "etape"]), n: 10, qs: [], i: 0, score: 0, log: [] };
+    const LABEL = { reperes: "Repères pertinents", situation: "Quelle situation ?", etape: "Quelle étape ?" };
+    function setup() {
+      app.innerHTML = deckShell(deck, "qcm", `<div class="panel"><h2>QCM</h2>
+        <p class="muted small">Questions générées à partir des cartes du jeu. On répond en touchant les propositions : rien à écrire.</p>
+        <div class="checks">
+          <label><input type="checkbox" data-t="reperes" checked> <b>Repères pertinents</b> · cocher les éléments attendus pour la carte (plusieurs réponses)</label>
+          <label><input type="checkbox" data-t="situation" checked> <b>Quelle situation ?</b> · retrouver la situation d'un repère</label>
+          <label><input type="checkbox" data-t="etape" checked> <b>Quelle étape ?</b> · associer un repère à l'étape ♥ ♦ ♣ ♠</label>
+        </div>
+        <div class="checks" style="margin-top:10px"><label>Nombre de questions <select id="nq"><option>5</option><option selected>10</option><option>20</option></select></label></div>
+        <div class="row" style="margin-top:14px"><button class="btn primary" id="go">Commencer</button></div>
+        <p class="muted small" style="margin-top:10px">Les propositions fausses sont tirées d'autres cartes du même jeu : une discussion est parfois utile pour trancher.</p></div>`);
+      document.getElementById("go").onclick = () => {
+        s.types = new Set([...app.querySelectorAll("[data-t]:checked")].map((x) => x.dataset.t));
+        if (!s.types.size) return toast("Choisissez au moins un type de question");
+        s.n = +document.getElementById("nq").value; const types = [...s.types];
+        s.qs = shuffle(all).slice(0, s.n).map((c, k) => buildQ(types[k % types.length], c, all, deck));
+        s.i = 0; s.score = 0; s.log = []; ask();
+      };
+    }
+    function ask() {
+      if (s.i >= s.qs.length) return end();
+      const q = s.qs[s.i], c = q.card;
+      app.innerHTML = deckShell(deck, "qcm", `<div class="play">
+        <div class="bar"><b>${s.i + 1} / ${s.qs.length}</b><div class="progress"><i style="width:${(s.i / s.qs.length) * 100}%"></i></div><span class="tag">${LABEL[q.type]}</span><b>${s.score} pt</b></div>
+        <article class="card" style="--c:${esc(c.coul.col)}">
+          <div class="hd"><div class="idx"><div class="v">${q.type === "situation" ? "?" : esc(c.sit.valeur)}</div><div class="s">${q.type === "etape" ? "?" : esc(c.coul.sym)}</div></div>
+            <div style="flex:1"><div class="step">${q.type === "etape" ? "Étape à trouver" : esc(c.coul.sym) + " " + esc(c.coul.nom) + " · " + esc(c.coul.etape)}</div>
+            <h3>${q.type === "situation" ? "Situation à trouver" : esc(c.sit.titre)}</h3></div></div>
+          <div class="bd">
+            ${q.type === "reperes" ? `<p class="vig">${esc(c.carte.vignette)}</p><p class="q">${esc(q.stem)}</p><p class="muted small">Plusieurs réponses possibles : sélectionnez tous les éléments attendus.</p>`
+              : `<p class="vig">${esc(q.stem)}</p><p class="q">${esc(q.ask)}</p>`}
+            <div class="opts">${q.options.map((o, k) => `<button class="opt" data-k="${k}">${esc(o.t)}</button>`).join("")}</div>
+            <div class="row" style="margin-top:12px" id="act">${q.multi ? '<button class="btn primary" id="val">Valider</button>' : ""}</div>
+            <div id="fb"></div>
+          </div></article></div>`);
+      const btns = [...app.querySelectorAll(".opt")]; let done = false;
+      const correct = (picked) => {
+        done = true;
+        btns.forEach((b) => { const o = q.options[+b.dataset.k]; b.disabled = true; b.classList.add(o.ok ? "good" : picked.has(+b.dataset.k) ? "bad" : "dim"); });
+        const goodPicked = q.options.filter((o, k) => o.ok && picked.has(k)).length, nGood = q.options.filter((o) => o.ok).length;
+        const wrongPicked = q.options.filter((o, k) => !o.ok && picked.has(k)).length;
+        const pts = q.multi ? Math.max(0, goodPicked - wrongPicked) / nGood : (goodPicked ? 1 : 0);
+        s.score = Math.round((s.score + pts) * 10) / 10; s.log.push({ q, pts });
+        document.getElementById("fb").innerHTML = `<div class="notice" style="margin-top:12px"><b>${pts === 1 ? "Exact." : pts > 0 ? "Partiellement juste." : "Pas tout à fait."}</b>
+          ${q.type === "reperes" ? `Repères attendus de la carte :<ul>${c.carte.reperes.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : `Réponse : <b>${esc(q.type === "situation" ? c.sit.titre : c.coul.sym + " " + c.coul.etape)}</b> (carte ${esc(c.sit.valeur)}${esc(c.coul.sym)}).`}</div>`;
+        document.getElementById("act").innerHTML = `<button class="btn primary" id="nx">${s.i + 1 < s.qs.length ? "Question suivante" : "Voir le bilan"}</button>`;
+        document.getElementById("nx").onclick = () => { s.i++; ask(); window.scrollTo(0, 0); };
+      };
+      if (q.multi) {
+        const sel = new Set();
+        btns.forEach((b) => b.onclick = () => { if (done) return; const k = +b.dataset.k; sel.has(k) ? sel.delete(k) : sel.add(k); b.classList.toggle("sel"); });
+        document.getElementById("val").onclick = () => correct(sel);
+      } else btns.forEach((b) => b.onclick = () => { if (!done) correct(new Set([+b.dataset.k])); });
+    }
+    function end() {
+      const pct = Math.round((s.score / s.qs.length) * 100);
+      app.innerHTML = deckShell(deck, "qcm", `<div class="panel"><h2>Bilan du QCM</h2>
+        <div class="row"><div><div class="big-stat">${s.score}<span class="muted small"> / ${s.qs.length}</span></div><div class="small muted">${pct} %</div></div></div>
+        <h3 class="small">Questions les moins réussies</h3><div class="list">${s.log.filter((l) => l.pts < 1).map((l) => `<a href="#/jeu/${esc(deck.id)}/cartes?q=${encodeURIComponent(l.q.card.sit.titre)}"><span class="v" style="color:${esc(l.q.card.coul.col)}">${esc(l.q.card.sit.valeur)}${esc(l.q.card.coul.sym)}</span>${esc(l.q.card.sit.titre)} · ${LABEL[l.q.type]}</a>`).join("") || '<div class="muted small">Aucune : bravo !</div>'}</div>
+        <div class="row" style="margin-top:14px"><button class="btn primary" id="again">Nouveau QCM</button></div></div>`);
+      document.getElementById("again").onclick = setup;
+    }
+    setup();
+  }
+
+  // ---------- Oral : l'application écoute et juge (reconnaissance vocale) ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const STOP = new Set("avec pour dans sans plus moins entre chez leur leurs etre avoir faire cette ces sont tout tous toute toutes comme apres avant depuis sous vers dont quand ainsi aussi tres bien selon elle elles ils nous vous mais donc encore deja jamais toujours votre notre quel quelle quels quelles autre autres meme cela ceci celle celui ceux fois chaque peut doit etc".split(" "));
+  const normTxt = (t) => String(t).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/œ/g, "oe").replace(/[’']/g, " ");
+  function stems(t) {
+    const out = new Set();
+    String(t).replace(/[’']/g, " ").split(/[^A-Za-zÀ-ÿœŒ0-9₂]+/).forEach((w) => {
+      if (!w) return;
+      const n = normTxt(w);
+      const acronym = w.length >= 2 && w === w.toUpperCase() && /[A-Z]/.test(w);
+      if (/^\d/.test(n) || acronym || (n.length >= 4 && !STOP.has(n))) out.add(n.slice(0, 6));
+    });
+    return out;
+  }
+  function detect(reperes, transcript) {
+    const T = stems(transcript);
+    return reperes.map((r) => {
+      const K = [...stems(r)]; if (!K.length) return false;
+      const hits = K.filter((k) => T.has(k) || [...T].some((t) => t.length >= 5 && k.length >= 5 && (t.startsWith(k.slice(0, 5)) || k.startsWith(t.slice(0, 5))))).length;
+      const need = K.length <= 2 ? 1 : K.length <= 5 ? 2 : 3;
+      return hits >= need;
+    });
+  }
+  function viewOral(deck) {
+    const all = cardsOf(deck);
+    const s = { mode: "solo", secs: 60, order: [], i: 0, total: 0, max: 0, voice: !!SR };
+    let rec = null, listening = false;
+    const stopRec = () => { listening = false; if (rec) { try { rec.stop(); } catch (e) {} } };
+    window.__stopRec = stopRec;
+    function setup() {
+      stopTimer(); stopRec();
+      app.innerHTML = deckShell(deck, "oral", `<div class="panel"><h2>Oral : l'application écoute</h2>
+        <p class="muted small">Lisez la carte, appuyez sur le micro et répondez à voix haute. L'application reconnaît votre réponse et vérifie quels repères attendus vous avez cités. On joue seul, sans rien écrire.</p>
+        ${SR ? "" : '<div class="notice">La reconnaissance vocale n\'est pas disponible sur ce navigateur. Utilisez Chrome, Edge (ordinateur, Android) ou Safari (iPhone, Mac). En attendant, vous pourrez vous auto-évaluer en touchant les repères que vous avez cités.</div>'}
+        <div class="checks" style="margin-top:10px">
+          <label><input type="radio" name="m" value="solo" checked> <b>Réponse argumentée</b> · 1 minute par carte</label>
+          <label><input type="radio" name="m" value="chrono"> <b>30 secondes chrono</b> · citer un maximum de repères</label>
+        </div>
+        <div class="checks" style="margin-top:10px"><label>Couleur <select id="suit"><option value="">toutes</option>${deck.couleurs.map((c) => `<option value="${esc(c.cle)}">${esc(c.sym)} ${esc(c.etape)}</option>`).join("")}</select></label>
+          <label>Situation <select id="sit"><option value="">toutes</option>${deck.situations.map((x) => `<option value="${esc(x.valeur)}">${esc(x.valeur)} · ${esc(x.titre)}</option>`).join("")}</select></label></div>
+        <div class="row" style="margin-top:14px"><button class="btn primary" id="go">Commencer</button></div>
+        <p class="muted small" style="margin-top:10px">Le micro est demandé au premier essai. La transcription est réalisée par le service vocal du navigateur (Google ou Apple) ; rien n'est conservé par l'application. Le jugement automatique repose sur les mots-clés : vous pouvez le corriger d'un toucher.</p></div>`);
+      document.getElementById("go").onclick = () => {
+        s.mode = app.querySelector("[name=m]:checked").value; s.secs = s.mode === "chrono" ? 30 : 60;
+        const suit = document.getElementById("suit").value, sit = document.getElementById("sit").value;
+        s.order = shuffle(all.filter((c) => (!suit || c.coul.cle === suit) && (!sit || c.sit.valeur === sit))); s.i = 0; s.total = 0; s.max = 0; card();
+      };
+    }
+    function card() {
+      stopTimer(); stopRec();
+      if (s.i >= s.order.length) return end();
+      const c = s.order[s.i]; const first = deck.couleurs[0].cle; const n = c.carte.reperes.length;
+      const sitLine = deck.rappel && c.coul.cle !== first ? `<p class="sit"><b>Situation :</b> ${esc(c.sit.cartes[first].vignette)}</p>` : "";
+      app.innerHTML = deckShell(deck, "oral", `<div class="play">
+        <div class="bar"><b>Carte ${s.i + 1} / ${s.order.length}</b><div class="spacer"></div><span class="timer" id="tm">${s.secs}s</span>
+          ${s.max ? `<b>${Math.round((s.total / s.max) * 100)} %</b>` : ""}<button class="btn sm" id="stop">Terminer</button></div>
+        <article class="card" style="--c:${esc(c.coul.col)}">
+          <div class="hd"><div class="idx"><div class="v">${esc(c.sit.valeur)}</div><div class="s">${esc(c.coul.sym)}</div></div>
+            <div style="flex:1"><div class="step">${esc(c.coul.sym)} ${esc(c.coul.nom)} · ${esc(c.coul.etape)}</div><h3>${esc(c.sit.titre)}</h3></div></div>
+          <div class="bd">${sitLine}<p class="vig">${esc(c.carte.vignette)}</p><p class="q">${esc(c.carte.question)}</p>
+            <div class="slots" id="slots">${c.carte.reperes.map(() => '<span class="slot"></span>').join("")}</div>
+            <p class="muted small" id="slotlbl">${n} repères attendus · ils s'allument quand vous les citez</p>
+            <div class="mic-zone"><button class="mic" id="mic" aria-label="Parler">🎙</button>
+              <div id="micst" class="small muted">${s.voice ? "Touchez le micro et répondez à voix haute" : "Répondez à voix haute, puis touchez « J'ai terminé »"}</div></div>
+            <p class="transcript" id="tr"></p>
+            <div class="row" style="justify-content:center"><button class="btn" id="done">J'ai terminé</button></div>
+            <div id="res"></div>
+          </div></article></div>`);
+      document.getElementById("stop").onclick = end;
+      const slots = [...app.querySelectorAll(".slot")];
+      let finalTxt = "", interim = "", started = false, finished = false;
+      const refresh = () => {
+        const txt = finalTxt + " " + interim;
+        document.getElementById("tr").textContent = txt.trim() ? "« " + txt.trim() + " »" : "";
+        const d = detect(c.carte.reperes, txt); slots.forEach((el, k) => el.classList.toggle("on", d[k]));
+        document.getElementById("slotlbl").textContent = `${d.filter(Boolean).length} / ${n} repères reconnus`;
+      };
+      const finish = () => {
+        if (finished) return; finished = true; stopTimer(); stopRec();
+        const mic = document.getElementById("mic"); if (mic) mic.classList.remove("live");
+        const det = s.voice ? detect(c.carte.reperes, finalTxt + " " + interim) : c.carte.reperes.map(() => false);
+        const got = new Set(det.map((v, k) => (v ? k : -1)).filter((k) => k >= 0));
+        const drawRes = () => {
+          document.getElementById("res").innerHTML = `<div class="kicker" style="color:var(--c);margin:14px 0 6px">${s.voice ? "Verdict de l'application" : "Auto-évaluation"} · ${got.size} / ${n}</div>
+            <div class="opts">${c.carte.reperes.map((r, k) => `<button class="opt ${got.has(k) ? "good" : "miss"}" data-k="${k}">${got.has(k) ? "✓ " : "✗ "}${esc(r)}</button>`).join("")}</div>
+            <p class="muted small" style="margin-top:6px">${s.voice ? "Erreur de reconnaissance ? Touchez un repère pour corriger le verdict." : "Touchez les repères que vous avez cités."}</p>
+            <div class="row" style="margin-top:10px"><button class="btn primary" id="nx">${s.i + 1 < s.order.length ? "Carte suivante" : "Voir le bilan"}</button>
+            <button class="btn" id="retry">Réessayer cette carte</button></div>`;
+          document.querySelectorAll("#res .opt").forEach((b) => b.onclick = () => { const k = +b.dataset.k; got.has(k) ? got.delete(k) : got.add(k); drawRes(); });
+          document.getElementById("nx").onclick = () => { s.total += got.size; s.max += n; s.i++; card(); window.scrollTo(0, 0); };
+          document.getElementById("retry").onclick = card;
+        };
+        document.getElementById("done").style.display = "none";
+        document.getElementById("micst").textContent = s.voice ? "Écoute terminée" : "";
+        drawRes();
+      };
+      document.getElementById("done").onclick = finish;
+      const startListen = () => {
+        if (started || finished) return; started = true;
+        const tm = document.getElementById("tm"); startTimer(tm, s.secs, finish);
+        if (!s.voice) return;
+        rec = new SR(); rec.lang = "fr-FR"; rec.continuous = true; rec.interimResults = true; listening = true;
+        document.getElementById("mic").classList.add("live"); document.getElementById("micst").textContent = "Je vous écoute… parlez librement";
+        rec.onresult = (e) => {
+          interim = "";
+          for (let k = e.resultIndex; k < e.results.length; k++) { const t = e.results[k][0].transcript; if (e.results[k].isFinal) finalTxt += " " + t; else interim += " " + t; }
+          refresh();
+        };
+        rec.onerror = (e) => {
+          if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture") {
+            s.voice = false; listening = false; document.getElementById("mic").classList.remove("live");
+            document.getElementById("micst").textContent = "Micro indisponible : répondez à voix haute, puis touchez « J'ai terminé » pour vous auto-évaluer.";
+          }
+        };
+        rec.onend = () => { if (listening && !finished) { try { rec.start(); } catch (e) {} } };
+        try { rec.start(); } catch (e) { s.voice = false; }
+      };
+      document.getElementById("mic").onclick = () => { if (!started) startListen(); else finish(); };
+    }
+    function end() {
+      stopTimer(); stopRec();
+      const pct = s.max ? Math.round((s.total / s.max) * 100) : 0;
+      app.innerHTML = deckShell(deck, "oral", `<div class="panel"><h2>Bilan de l'oral</h2>
+        <div class="big-stat">${pct} %</div><div class="small muted">${s.total} repères cités sur ${s.max}, en ${s.i} carte${s.i > 1 ? "s" : ""}</div>
+        <div class="row" style="margin-top:14px"><button class="btn primary" id="again">Nouvelle série</button></div></div>`);
+      document.getElementById("again").onclick = setup;
+    }
+    setup();
+  }
+
   function viewRules(deck) {
     const pdf = deck.builtin ? `jeu_${deck.id}.pdf` : null;
     app.innerHTML = deckShell(deck, "regles", `
@@ -430,7 +655,7 @@
 
   // ---------- routeur ----------
   function route() {
-    stopTimer();
+    stopTimer(); try { window.__stopRec && window.__stopRec(); } catch (e) {}
     const raw = location.hash.replace(/^#/, "") || "/";
     const [path, qs] = raw.split("?");
     const params = new URLSearchParams(qs || "");
@@ -439,7 +664,7 @@
     if (parts[0] === "jeu" && parts[1]) {
       const deck = deckById(decodeURIComponent(parts[1]));
       if (!deck) { app.innerHTML = '<div class="empty">Jeu introuvable. <a href="#/">Retour à l\'accueil</a></div>'; return; }
-      const v = { "": viewDeck, cartes: viewCards, eclair: viewEclair, filrouge: viewFilRouge, carre: viewCarre, regles: viewRules }[parts[2] || ""] || viewDeck;
+      const v = { "": viewDeck, cartes: viewCards, eclair: viewEclair, filrouge: viewFilRouge, carre: viewCarre, regles: viewRules, qcm: viewQCM, oral: viewOral }[parts[2] || ""] || viewDeck;
       v(deck, params);
     } else if (parts[0] === "gerer") viewManage();
     else if (parts[0] === "aide") viewHelp();

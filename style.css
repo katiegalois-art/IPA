@@ -116,6 +116,25 @@ h2 { font-size: 18px; margin: 26px 0 10px; }
 .badge.ok { background: #e4f3ea; color: #1F6E43; }
 .badge.ko { background: #fff1de; color: #8a4b00; }
 
+/* --- QCM et oral --- */
+.opts { display: grid; gap: 8px; margin-top: 6px; }
+.opt { text-align: left; padding: 11px 12px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; cursor: pointer; font-size: 14px; line-height: 1.4; color: var(--ink); }
+.opt:hover:not(:disabled) { border-color: var(--c, var(--dc)); }
+.opt.sel { border-color: var(--c, var(--dc)); background: color-mix(in srgb, var(--c, var(--dc)) 10%, white); font-weight: 600; }
+.opt.good { border-color: #1F6E43; background: #e4f3ea; color: #14492c; font-weight: 600; }
+.opt.bad { border-color: #B3261E; background: #fdeceb; color: #7d1a15; text-decoration: line-through; }
+.opt.dim { opacity: .55; }
+.opt.miss { border-color: #e0dcd3; background: #f7f5f1; color: #6b6b6b; }
+.slots { display: flex; gap: 6px; margin: 4px 0 4px; }
+.slot { flex: 1; height: 10px; border-radius: 999px; background: #ece8e0; transition: background .3s; }
+.slot.on { background: #1F6E43; }
+.mic-zone { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 16px 0 8px; text-align: center; }
+.mic { width: 84px; height: 84px; border-radius: 50%; border: none; background: var(--c, var(--dc)); color: #fff; font-size: 34px; cursor: pointer; box-shadow: var(--shadow); }
+.mic.live { animation: pulse 1.3s infinite; background: #B3261E; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(179,38,30,.45); } 70% { box-shadow: 0 0 0 18px rgba(179,38,30,0); } 100% { box-shadow: 0 0 0 0 rgba(179,38,30,0); } }
+.transcript { font-style: italic; color: #444; font-size: 14px; line-height: 1.45; min-height: 1em; text-align: center; }
+.opt:disabled { cursor: default; }
+
 /* --- consultation --- */
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
 .chip { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 6px 11px; font-size: 13px; cursor: pointer; font-weight: 600; }
