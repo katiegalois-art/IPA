@@ -341,7 +341,7 @@
   }
 
   function viewRules(deck) {
-    const pdf = deck.builtin ? `print/${deck.id}.pdf` : null;
+    const pdf = deck.builtin ? `jeu_${deck.id}.pdf` : null;
     app.innerHTML = deckShell(deck, "regles", `
       <div class="panel"><h2>Principe</h2><p class="lead">${esc(deck.intro || "")}</p>
         <table class="simple"><tr><th>Couleur</th><th>Étape</th><th>Contenu</th></tr>
